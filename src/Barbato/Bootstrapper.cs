@@ -38,7 +38,10 @@
             base.ApplicationStartup(container, pipelines);
             var directory = new DirectoryInfo(ConfigurationManager.AppSettings["ClonedGitFolder"]);
             if (!directory.Exists)
+            {
                 directory.Create();
+            }
+                
             
 #if DEBUG
             StaticConfiguration.Caching.EnableRuntimeViewDiscovery = true;
