@@ -3,11 +3,11 @@
     using System;
     using System.Collections.Generic;
     using System.Linq;
-    using CsQuery.ExtensionMethods;
     using Enums;
     using Extensions;
     using Models;
     using Nancy;
+    using Nancy.Cookies;
     using ViewModels;
 
     internal class TestModule : NancyModule
@@ -48,9 +48,6 @@
 
         public TestModule()
         {
-            // Generates the post from Markdown
-            Get["/post/{file}"] = x => View[(string) x.file];
-
             // Generates any static page given all site content
             Post["/static"] = x =>
             {
@@ -81,8 +78,10 @@
             // with a SiteContent property for access to everything
             Post["/compose"] = x =>
             {
-                var result = new PostViewModel
+                dynamic result = new PostViewModel
                 {
+                    Drafts = Drafts,
+                    Posts = Posts,
                     GeneratedUrl = GeneratedUrl,
                     PostContent = Data.Content,
                     PostDate = Data.Date,
@@ -102,10 +101,14 @@
                     Published = Data.Published
                 };
 
+                result.Banana = "WOW!";
+
                 return View[result.Layout, result];
             };
 
-            Post["/rss"] = x => Response.AsRSS(PostsPaged, Settings.BlogTitle, Settings.SiteUrl, StaticFile);
+            Post["/rss"] = x => Response.AsRSS(Posts.Take(Settings.FeedSize), Settings.BlogTitle, Settings.SiteUrl, StaticFile);
+
+            Post["/atom"] = x => Response.AsAtom(Posts.Take(Settings.FeedSize), Settings.BlogTitle, Settings.SiteUrl, Settings.Author, Settings.Email, StaticFile);
 
             Post["/sitemap"] = x =>
             {

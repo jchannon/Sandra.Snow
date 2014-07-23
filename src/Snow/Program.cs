@@ -1,25 +1,20 @@
 ﻿namespace Snow
 {
-    using System.Diagnostics;
+    using System;
+    using System.Collections.Generic;
+    using System.IO;
+    using System.Linq;
+    using System.Reflection;
     using Enums;
     using Exceptions;
     using Extensions;
-    using Microsoft.Owin.FileSystems;
-    using Microsoft.Owin.Hosting;
-    using Microsoft.Owin.StaticFiles;
     using Models;
     using Nancy;
     using Nancy.Testing;
     using Nancy.ViewEngines.Razor;
     using Nancy.ViewEngines.SuperSimpleViewEngine;
     using Newtonsoft.Json;
-    using Owin;
     using StaticFileProcessors;
-    using System;
-    using System.Collections.Generic;
-    using System.IO;
-    using System.Linq;
-    using System.Reflection;
 
     public class Program
     {
@@ -59,7 +54,7 @@
                 var settings = CreateSettings(currentDir);
 
                 var extensions = new HashSet<string>(new[] { ".md", ".markdown" }, StringComparer.OrdinalIgnoreCase);
-                var files = new DirectoryInfo(settings.Posts).EnumerateFiles()
+                var files = new DirectoryInfo(settings.Posts).EnumerateFiles("*", SearchOption.AllDirectories)
                                                              .Where(x => extensions.Contains(x.Extension));
 
                 SetupOutput(settings);
@@ -67,16 +62,9 @@
                 StaticPathProvider.Path = settings.CurrentDir;
                 SnowViewLocationConventions.Settings = settings;
 
-                var browserParser = new Browser(with =>
-                {
-                    with.Module<TestModule>();
-                    with.RootPathProvider<StaticPathProvider>();
-                    with.ViewEngine<CustomMarkDownViewEngine>();
-                });
-
-                var posts = files.Select(x => PostParser.GetFileData(x, browserParser, settings))
+                var posts = files.Select(x => PostParser.GetFileData(x, settings))
                                  .OrderByDescending(x => x.Date)
-                                 .Where(x => x.Published != Published.Private)
+                                 .Where(x => x.Published != Published.Private && !(x is Post.MissingPost))
                                  .ToList();
 
                 posts.SetPostUrl(settings);
@@ -117,7 +105,8 @@
 
                 foreach (var copyDirectory in settings.CopyDirectories)
                 {
-                    var sourceDir = copyDirectory;
+                    var sourceDir = (settings.ThemesDir + Path.DirectorySeparatorChar + settings.Theme + Path.DirectorySeparatorChar + copyDirectory);
+
                     var destinationDir = copyDirectory;
 
                     if (copyDirectory.Contains(" => "))
@@ -129,8 +118,44 @@
                     }
 
                     var source = Path.Combine(settings.CurrentDir, sourceDir);
-                    var destination = Path.Combine(settings.Output, destinationDir);
+
+                    if (!Directory.Exists(source))
+                    {
+                        source = Path.Combine(settings.CurrentDir, copyDirectory);
+
+                        if (!Directory.Exists(source))
+                        {
+                            copyDirectory.OutputIfDebug("Unable to find the directory, so we're skipping it: ");
+                            continue;
+                        }
+                    }
+
+                    // If the destination directory is "." copy the folder files to the output folder root
+                    var destination = destinationDir == "." ? settings.Output : Path.Combine(settings.Output, destinationDir);
+
                     new DirectoryInfo(source).Copy(destination, true);
+                }
+
+                foreach (var copyFile in settings.CopyFiles)
+                {
+                    var sourceFile = (settings.ThemesDir + Path.DirectorySeparatorChar + settings.Theme + Path.DirectorySeparatorChar + copyFile);
+                    var source = Path.Combine(settings.CurrentDir, sourceFile);
+                    var destinationFile = copyFile;
+
+                    if (!File.Exists(source))
+                    {
+                        source = Path.Combine(settings.CurrentDir, copyFile);
+
+                        if (!File.Exists(source))
+                        {
+                            copyFile.OutputIfDebug("Unable to find the directory, so we're skipping it: ");
+                            continue;
+                        }
+                    }
+
+                    var destination = Path.Combine(settings.Output, destinationFile);
+
+                    File.Copy(source, destination, true);
                 }
 
                 Console.WriteLine("Sandra.Snow : " + DateTime.Now.ToString("HH:mm:ss") + " : Finish processing");
@@ -230,7 +255,7 @@
 
                 var singleInt = value as int?;
 
-                if (singleInt.HasValue)
+                if (singleInt.HasValue && singleInt > 0)
                 {
                     propertyInfo.SetValue(settings, value);
                 }
@@ -272,16 +297,24 @@
                 var body = result.Body.AsString();
 
                 var outputFolder = Path.Combine(output, post.Url.Trim('/')); //Outputfolder is incorrect with leading slash on urlFormat
+                var outputFile = Path.Combine(outputFolder, "index.html");
+
+                if (outputFolder.IsFileUrl())
+                {
+                    outputFile = outputFolder;
+                    outputFolder = Path.GetDirectoryName(outputFolder);
+                }
 
                 if (!Directory.Exists(outputFolder))
                 {
                     Directory.CreateDirectory(outputFolder);
                 }
 
-                File.WriteAllText(Path.Combine(outputFolder, "index.html"), body);
+                File.WriteAllText(outputFile, body);
             }
-            catch (Exception)
+            catch (Exception ex)
             {
+                Console.WriteLine(ex.Message);
             }
         }
 
@@ -301,13 +334,20 @@
                 var body = result.Body.AsString();
 
                 var outputFolder = Path.Combine(output, post.Url.Trim('/')); //Outputfolder is incorrect with leading slash on urlFormat
+                var outputFile = Path.Combine(outputFolder, "index.html");
+
+                if (outputFolder.IsFileUrl())
+                {
+                    outputFile = outputFolder;
+                    outputFolder = Path.GetDirectoryName(outputFolder);
+                }
 
                 if (!Directory.Exists(outputFolder))
                 {
                     Directory.CreateDirectory(outputFolder);
                 }
 
-                File.WriteAllText(Path.Combine(outputFolder, "index.html"), body);
+                File.WriteAllText(outputFile, body);
             }
             catch (Exception)
             {

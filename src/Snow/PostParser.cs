@@ -5,11 +5,14 @@
     using System.Globalization;
     using System.IO;
     using System.Linq;
+    using System.Runtime.InteropServices;
     using System.Text.RegularExpressions;
     using Extensions;
+    using MarkdownSharp;
     using Models;
     using Nancy.Helpers;
     using Nancy.Testing;
+    using PostParsers;
 
     public class PostParser
     {
@@ -20,26 +23,28 @@
         private static readonly IDictionary<string, Func<List<string>, object>>
             SubSettingParsers = new Dictionary<string, Func<List<string>, object>>();
 
+        private static readonly Markdown Markdown = new Markdown();
+
         static PostParser()
         {
             SubSettingParsers.Add("series", SeriesParser);
         }
 
-        public static Post GetFileData(FileInfo file, Browser browser, SnowSettings snowSettings)
+        public static Post GetFileData(FileInfo file, SnowSettings snowSettings)
         {
-            var response = browser.Get("/post/" + HttpUtility.UrlEncodeUnicode(file.Name));
             var rawPost = File.ReadAllText(file.FullName);
             var fileNameMatches = FileNameRegex.Match(file.Name);
             var rawSettings = string.Empty;
 
             if (!fileNameMatches.Success)
             {
-                throw new ApplicationException("File " + file.Name +
-                                               " does not match the format {year}-{month}-{day}-{slug}.(md|markdown)");
+                file.Name.OutputIfDebug(" - Skipping file: ");
+                " - File does not match the format {year}-{month}-{day}-{slug}.(md|markdown)".OutputIfDebug();
+                return new Post.MissingPost();
             }
 
-            var result = ParseDataFromFile(rawPost);
-            var settings = ParseSettings(result.Item1);
+            var result = MarkdownFileParser.ParseDataFromFile(rawPost);
+            var settings = ParseSettings(result.Header);
 
             var year = fileNameMatches.Groups["year"].Value;
             var month = fileNameMatches.Groups["month"].Value;
@@ -47,11 +52,28 @@
             var slug = fileNameMatches.Groups["slug"].Value.ToUrlSlug();
             var date = DateTime.ParseExact(year + month + day, "yyyyMMdd", CultureInfo.InvariantCulture);
 
+            /// if a 'date' property is found in markdown file header, that date will be used instead of the date in the file name
+            if (settings.ContainsKey("date"))
+            {
+                try
+                {
+                    date = DateTime.Parse((string)settings["date"]);
+                }
+                finally
+                {
+                    /// do nothing, let the current 'date' be as is
+                }
+            }
+
+            var bodySerialized = Markdown.Transform(result.Body);
+            var excerptSerialized = Markdown.Transform(result.Excerpt ?? string.Empty);
+
             var postHeader = new Post
             {
                 FileName = file.Name,
                 MarkdownHeader = rawSettings,
-                Content = response.Body.AsString(),
+                Content = bodySerialized,
+                ContentExcerpt = excerptSerialized,
                 Settings = settings,
                 Year = date.Year,
                 Month = date.Month,
@@ -65,37 +87,7 @@
 
             return postHeader;
         }
-
-        public static Tuple<string, string> ParseDataFromFile(string rawPost)
-        {
-            var settings = string.Empty;
-            var post = string.Empty;
-
-            //Get the Header info from a Post Markdown File
-            //Find the first index of ---
-            var startOfSettingsIndex = rawPost.IndexOf("---", StringComparison.InvariantCultureIgnoreCase);
-            if (startOfSettingsIndex >= 0)
-            {
-                //Find the second index of --- after the first
-                var endOfSettingsIndex = rawPost.IndexOf("---", startOfSettingsIndex + 3,
-                    StringComparison.InvariantCultureIgnoreCase);
-
-                //If we find the 2nd index, parse the settings
-                //Otherwise we assume there's no header or settings...
-                if (endOfSettingsIndex >= 0)
-                {
-                    settings = rawPost.Substring(startOfSettingsIndex, endOfSettingsIndex + 3);
-                    post = rawPost.Substring(endOfSettingsIndex + 3, rawPost.Length - (endOfSettingsIndex + 3));
-                }
-            }
-            else
-            {
-                post = rawPost;
-            }
-
-            return new Tuple<string, string>(settings, post);
-        }
-
+        
         public static Dictionary<string, object> ParseSettings(string rawSettings)
         {
             if (string.IsNullOrWhiteSpace(rawSettings))
